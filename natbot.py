@@ -5,6 +5,7 @@
 # Set OPENAI_API_KEY to your API key, and then run this from a terminal.
 #
 
+import logging
 import os
 import time
 from argparse import ArgumentParser
@@ -225,6 +226,10 @@ class Crawler:
 
     def pause(self):
         self.page.pause()
+
+    def close(self):
+        self.page.close()
+        self.browser.close()
 
     def get_element_at(self, id):
         return self.page_element_buffer.get(int(id))
@@ -468,7 +473,8 @@ class Crawler:
             page_element_buffer[id_counter] = element
 
             if inner_text != "":
-                elements_of_interest[id_counter] =f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
+                elements_of_interest[
+                    id_counter] = f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
             else:
                 elements_of_interest[id_counter] = f"""<{converted_node_name} id={id_counter}{meta}/>"""
 
@@ -552,12 +558,32 @@ def print_help():
     print(f"{os.linesep}[bold]Select One:[/bold] " + " , ".join(options))
 
 
+def setup_logging(verbosity):
+    logging_level = logging.WARNING
+    if verbosity == 1:
+        logging_level = logging.INFO
+    elif verbosity >= 2:
+        logging_level = logging.DEBUG
+
+    logging.basicConfig(
+        handlers=[
+            logging.StreamHandler(),
+        ],
+        format="%(asctime)s - %(filename)s:%(lineno)d - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        level=logging_level,
+    )
+    logging.captureWarnings(capture=True)
+
+
 def get_gpt_command(objective, url, previous_command, browser_content):
     prompt = prompt_template
     prompt = prompt.replace("$objective", objective)
     prompt = prompt.replace("$url", url[:100])
     prompt = prompt.replace("$previous_command", previous_command)
     prompt = prompt.replace("$browser_content", browser_content[:4500])
+    if len(browser_content) > 4500:
+        logging.info("🔴🔴 Browser content was truncated, missing content: \n" + browser_content[4500:])
     response = openai.Completion.create(
         model="text-davinci-003", prompt=prompt, temperature=0.5, best_of=10, n=3, max_tokens=50
     )
@@ -604,6 +630,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    setup_logging(verbosity=1)
     args = parse_args()
     quiet = args.quiet
     if quiet:
@@ -643,10 +670,11 @@ if __name__ == "__main__":
                 # print("----------------\n" + browser_content + "\n----------------\n")
             if len(gpt_cmd) > 0:
                 print(f"Suggested command: [bold]{gpt_cmd}[/bold]")
-                suggested_id = gpt_cmd.split(" ")[1]
-                if suggested_id:
+                suggested_id:str = gpt_cmd.split(" ")[1]
+                if suggested_id and suggested_id.isdigit():
                     suggested_element = _crawler.get_element_at(suggested_id)
-                    print(f"Suggested element: [underline]{interested_elements.get(int(suggested_id))}[/underline] - Raw element: [underline]{suggested_element}[/underline]")
+                    print(
+                        f"Suggested element: [underline]{interested_elements.get(int(suggested_id))}[/underline] - Raw element: [underline]{suggested_element}[/underline]")
 
             print_help()
             command = input()
@@ -681,4 +709,7 @@ if __name__ == "__main__":
                 print_help()
     except KeyboardInterrupt:
         print("\n[!] Ctrl+C detected, exiting gracefully.")
+        _crawler.close()
         exit(0)
+
+    _crawler.close()

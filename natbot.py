@@ -14,6 +14,7 @@ from sys import exit, platform
 import openai
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
+from rich import print
 
 load_dotenv()
 
@@ -279,24 +280,24 @@ class Crawler:
         attributes = nodes["attributes"]
         node_value = nodes["nodeValue"]
         parent = nodes["parentIndex"]
-        nodes["nodeType"]
+        # nodes["nodeType"] TODO: Remove this
         node_names = nodes["nodeName"]
         is_clickable = set(nodes["isClickable"]["index"])
 
         text_value = nodes["textValue"]
-        text_value["index"]
-        text_value["value"]
+        # text_value["index"] TODO: Remove this
+        # text_value["value"] TODO: Remove this
 
         input_value = nodes["inputValue"]
         input_value_index = input_value["index"]
         input_value_values = input_value["value"]
 
-        nodes["inputChecked"]
+        # nodes["inputChecked"] TODO: Remove this
         layout = document["layout"]
         layout_node_index = layout["nodeIndex"]
         bounds = layout["bounds"]
 
-        cursor = 0
+        # cursor = 0 TODO: Remove this
 
         child_nodes = {}
         elements_in_view_port = []
@@ -304,70 +305,16 @@ class Crawler:
         anchor_ancestry = {"-1": (False, None)}
         button_ancestry = {"-1": (False, None)}
 
-        def convert_name(node_name, has_click_handler):
-            if node_name == "a":
-                return "link"
-            if node_name == "input":
-                return "input"
-            if node_name == "img":
-                return "img"
-            if node_name == "button" or has_click_handler:  # found pages that needed this quirk
-                return "button"
-            else:
-                return "text"
-
-        def find_attributes(attributes, keys):
-            values = {}
-
-            for [key_index, value_index] in zip(*(iter(attributes),) * 2):
-                if value_index < 0:
-                    continue
-                key = strings[key_index]
-                value = strings[value_index]
-
-                if key in keys:
-                    values[key] = value
-                    keys.remove(key)
-
-                    if not keys:
-                        return values
-
-            return values
-
-        def add_to_hash_tree(hash_tree, tag, node_id, node_name, parent_id):
-            parent_id_str = str(parent_id)
-            if not parent_id_str in hash_tree:
-                parent_name = strings[node_names[parent_id]].lower()
-                grand_parent_id = parent[parent_id]
-
-                add_to_hash_tree(hash_tree, tag, parent_id, parent_name, grand_parent_id)
-
-            is_parent_desc_anchor, anchor_id = hash_tree[parent_id_str]
-
-            # even if the anchor is nested in another anchor, we set the "root" for all descendants to be ::Self
-            if node_name == tag:
-                value = (True, node_id)
-            elif is_parent_desc_anchor:  # reuse the parent's anchor_id (which could be much higher in the tree)
-                value = (True, anchor_id)
-            else:
-                value = (
-                    False,
-                    None,
-                )  # not a descendant of an anchor, most likely it will become text, an interactive element or discarded
-
-            hash_tree[str(node_id)] = value
-
-            return value
-
         for index, node_name_index in enumerate(node_names):
             node_parent = parent[index]
             node_name = strings[node_name_index].lower()
 
-            is_ancestor_of_anchor, anchor_id = add_to_hash_tree(anchor_ancestry, "a", index, node_name, node_parent)
+            is_ancestor_of_anchor, anchor_id = add_to_hash_tree(strings, node_names, parent, anchor_ancestry, "a",
+                                                                index, node_name, node_parent)
 
-            is_ancestor_of_button, button_id = add_to_hash_tree(
-                button_ancestry, "button", index, node_name, node_parent
-            )
+            is_ancestor_of_button, button_id = add_to_hash_tree(strings, node_names, parent,
+                                                                button_ancestry, "button", index, node_name, node_parent
+                                                                )
 
             try:
                 cursor = layout_node_index.index(
@@ -403,9 +350,10 @@ class Crawler:
             meta_data = []
 
             # inefficient to grab the same set of keys for kinds of objects but its fine for now
-            element_attributes = find_attributes(
-                attributes[index], ["type", "placeholder", "aria-label", "title", "alt"]
-            )
+            element_attributes = find_attributes(strings,
+                                                 attributes[index],
+                                                 ["type", "placeholder", "aria-label", "title", "alt"]
+                                                 )
 
             ancestor_exception = is_ancestor_of_anchor or is_ancestor_of_button
             ancestor_node_key = (
@@ -463,7 +411,7 @@ class Crawler:
             )
 
         # lets filter further to remove anything that does not hold any text nor has click handlers + merge text from leaf#text nodes with the parent
-        elements_of_interest = []
+        elements_of_interest_with_ids = {}
         id_counter = 0
 
         for element in elements_in_view_port:
@@ -513,22 +461,87 @@ class Crawler:
             page_element_buffer[id_counter] = element
 
             if inner_text != "":
-                elements_of_interest.append(
-                    f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
-                )
+                elements_of_interest_with_ids[
+                    id_counter] = f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
             else:
-                elements_of_interest.append(f"""<{converted_node_name} id={id_counter}{meta}/>""")
+                elements_of_interest_with_ids[id_counter] = f"""<{converted_node_name} id={id_counter}{meta}/>"""
             id_counter += 1
 
         print(f"Parsing time: {time.time() - start:0.2f} seconds")
-        return elements_of_interest
+        return elements_of_interest_with_ids
+
+
+def add_to_hash_tree(strings, node_names, parent, hash_tree, tag, node_id, node_name, parent_id):
+    parent_id_str = str(parent_id)
+    if not parent_id_str in hash_tree:
+        parent_name = strings[node_names[parent_id]].lower()
+        grand_parent_id = parent[parent_id]
+
+        add_to_hash_tree(strings, node_names, parent, hash_tree, tag, parent_id, parent_name, grand_parent_id)
+
+    is_parent_desc_anchor, anchor_id = hash_tree[parent_id_str]
+
+    # even if the anchor is nested in another anchor, we set the "root" for all descendants to be ::Self
+    if node_name == tag:
+        value = (True, node_id)
+    elif is_parent_desc_anchor:  # reuse the parent's anchor_id (which could be much higher in the tree)
+        value = (True, anchor_id)
+    else:
+        value = (
+            False,
+            None,
+        )  # not a descendant of an anchor, most likely it will become text, an interactive element or discarded
+
+    hash_tree[str(node_id)] = value
+
+    return value
+
+
+def find_attributes(strings, attributes, keys):
+    values = {}
+
+    for [key_index, value_index] in zip(*(iter(attributes),) * 2):
+        if value_index < 0:
+            continue
+        key = strings[key_index]
+        value = strings[value_index]
+
+        if key in keys:
+            values[key] = value
+            keys.remove(key)
+
+            if not keys:
+                return values
+
+    return values
+
+
+def convert_name(node_name, has_click_handler):
+    if node_name == "a":
+        return "link"
+    if node_name == "input":
+        return "input"
+    if node_name == "img":
+        return "img"
+    if node_name == "button" or has_click_handler:  # found pages that needed this quirk
+        return "button"
+    else:
+        return "text"
 
 
 def print_help():
-    print(
-        "(g) to visit url\n(u) scroll up\n(d) scroll down\n(c) to click\n(t) to type\n"
-        + "(h) to view commands again\n(r/enter) to run suggested command\n(o) change objective"
-    )
+    options = [
+        '(g) to visit url',
+        '(u) scroll up',
+        '(d) scroll down',
+        '(c) to click',
+        '(t) to type',
+        '(h) to view commands again',
+        '(r/enter) to run suggested command',
+        '(o) change objective',
+        '(q) to quit'
+    ]
+    print("\n".join(options))
 
 
 def get_gpt_command(objective, url, previous_command, browser_content):
@@ -599,7 +612,7 @@ if __name__ == "__main__":
         exit(1)
 
     objective = "Make a reservation for 2 at 7pm at bistro vida in menlo park"
-    print("\nWelcome to natbot! What is your objective?")
+    print("\n[bold]Welcome to natbot! What is your objective?[/bold]")
     i = input()
     if len(i) > 0:
         objective = i
@@ -609,7 +622,8 @@ if __name__ == "__main__":
     _crawler.go_to_page("google.com")
     try:
         while True:
-            browser_content = "\n".join(_crawler.crawl())
+            list_with_ids = _crawler.crawl()
+            browser_content = "\n".join(list_with_ids.values())
             prev_cmd = gpt_cmd
             gpt_cmd = get_gpt_command(objective, _crawler.page.url, prev_cmd, browser_content)
             gpt_cmd = gpt_cmd.strip()
@@ -619,8 +633,12 @@ if __name__ == "__main__":
                 print("Objective: " + objective)
                 print("----------------\n" + browser_content + "\n----------------\n")
             if len(gpt_cmd) > 0:
-                print("Suggested command: " + gpt_cmd)
+                print(f"Suggested command: [bold]{gpt_cmd}[/bold]")
+                suggested_id = gpt_cmd.split(" ")[1]
+                if int(suggested_id) in list_with_ids:
+                    print(f"Suggested element: [underline]{list_with_ids[int(suggested_id)]}[/underline]")
 
+            print_help()
             command = input()
             if command == "r" or command == "":
                 run_cmd(gpt_cmd)
@@ -644,6 +662,8 @@ if __name__ == "__main__":
                 time.sleep(1)
             elif command == "o":
                 objective = input("Objective:")
+            elif command == "q":
+                break
             else:
                 print_help()
     except KeyboardInterrupt:

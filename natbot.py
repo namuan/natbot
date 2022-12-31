@@ -221,7 +221,13 @@ class Crawler:
 
             self.page.mouse.click(x, y)
         else:
-            print("Could not find element")
+            print(f"⚠️ Could not find element for {id=}")
+
+    def pause(self):
+        self.page.pause()
+
+    def get_element_at(self, id):
+        return self.page_element_buffer.get(int(id))
 
     def type(self, id, text):
         self.click(id)
@@ -391,7 +397,7 @@ class Crawler:
                 if node_input_text_index >= 0 and text_index >= 0:
                     element_node_value = strings[text_index]
 
-            # remove redudant elements
+            # remove redundant elements
             if ancestor_exception and (node_name != "a" and node_name != "button"):
                 continue
 
@@ -410,8 +416,9 @@ class Crawler:
                 }
             )
 
-        # lets filter further to remove anything that does not hold any text nor has click handlers + merge text from leaf#text nodes with the parent
-        elements_of_interest_with_ids = {}
+        # lets filter further to remove anything that does not hold any text nor has click handlers
+        # + merge text from leaf#text nodes with the parent
+        elements_of_interest = {}
         id_counter = 0
 
         for element in elements_in_view_port:
@@ -461,14 +468,14 @@ class Crawler:
             page_element_buffer[id_counter] = element
 
             if inner_text != "":
-                elements_of_interest_with_ids[
-                    id_counter] = f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
+                elements_of_interest[id_counter] =f"""<{converted_node_name} id={id_counter}{meta}>{inner_text}</{converted_node_name}>"""
             else:
-                elements_of_interest_with_ids[id_counter] = f"""<{converted_node_name} id={id_counter}{meta}/>"""
+                elements_of_interest[id_counter] = f"""<{converted_node_name} id={id_counter}{meta}/>"""
+
             id_counter += 1
 
         print(f"Parsing time: {time.time() - start:0.2f} seconds")
-        return elements_of_interest_with_ids
+        return elements_of_interest
 
 
 def add_to_hash_tree(strings, node_names, parent, hash_tree, tag, node_id, node_name, parent_id):
@@ -531,17 +538,18 @@ def convert_name(node_name, has_click_handler):
 
 def print_help():
     options = [
-        '(g) to visit url',
-        '(u) scroll up',
-        '(d) scroll down',
-        '(c) to click',
-        '(t) to type',
-        '(h) to view commands again',
-        '(r/enter) to run suggested command',
-        '(o) change objective',
-        '(q) to quit'
+        '[bold blue](g)[/bold blue] to visit url',
+        '[bold blue](p)[/bold blue] to pause and open debugger',
+        '[bold blue](u)[/bold blue] scroll up',
+        '[bold blue](d)[/bold blue] scroll down',
+        '[bold blue](c)[/bold blue] to click',
+        '[bold blue](t)[/bold blue] to type',
+        '[bold blue](h)[/bold blue] to view commands again',
+        '[bold blue](r/enter)[/bold blue] to run suggested command',
+        '[bold blue](o)[/bold blue] change objective',
+        '[bold blue](q)[/bold blue] to quit'
     ]
-    print("\n".join(options))
+    print(f"{os.linesep}[bold]Select One:[/bold] " + " , ".join(options))
 
 
 def get_gpt_command(objective, url, previous_command, browser_content):
@@ -622,21 +630,23 @@ if __name__ == "__main__":
     _crawler.go_to_page("google.com")
     try:
         while True:
-            list_with_ids = _crawler.crawl()
-            browser_content = "\n".join(list_with_ids.values())
+            interested_elements = _crawler.crawl()
+            browser_content = "\n".join(interested_elements.values())
             prev_cmd = gpt_cmd
             gpt_cmd = get_gpt_command(objective, _crawler.page.url, prev_cmd, browser_content)
             gpt_cmd = gpt_cmd.strip()
 
+            suggested_id = None
             if not quiet:
                 print("URL: " + _crawler.page.url)
                 print("Objective: " + objective)
-                print("----------------\n" + browser_content + "\n----------------\n")
+                # print("----------------\n" + browser_content + "\n----------------\n")
             if len(gpt_cmd) > 0:
                 print(f"Suggested command: [bold]{gpt_cmd}[/bold]")
                 suggested_id = gpt_cmd.split(" ")[1]
-                if int(suggested_id) in list_with_ids:
-                    print(f"Suggested element: [underline]{list_with_ids[int(suggested_id)]}[/underline]")
+                if suggested_id:
+                    suggested_element = _crawler.get_element_at(suggested_id)
+                    print(f"Suggested element: [underline]{interested_elements.get(int(suggested_id))}[/underline] - Raw element: [underline]{suggested_element}[/underline]")
 
             print_help()
             command = input()
@@ -645,6 +655,9 @@ if __name__ == "__main__":
             elif command == "g":
                 url = input("URL:")
                 _crawler.go_to_page(url)
+            elif command == "p":
+                if suggested_id:
+                    _crawler.pause()
             elif command == "u":
                 _crawler.scroll("up")
                 time.sleep(1)

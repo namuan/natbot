@@ -1,0 +1,5 @@
+python-dotenv
+openai
+rich
+pytest-playwright # playwright install
+bpython
